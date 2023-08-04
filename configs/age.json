@@ -1,2 +1,4 @@
 {"vocab_size": 202,
-"max_len": 900}
+"max_len": 900, 
+"rare_token0": 198,
+"rare_token1": 199}

@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import pandas as pd
 from data_preparation.data_reader import TrReader
 from models.LSTMatt import LSTMattNet
@@ -27,17 +28,6 @@ def init_model(data_config, model_name, n_unique_tokens, device):
     return net
 
 
-def generate_poisoning_tokens(attack_name, vocab_size, poison_params_dict):
-    if attack_name == "new_ptokens":
-        pt0, pt1 = [vocab_size], [vocab_size+1]
-    if attack_name == "composed_ptokens":
-        num_ptokens = poison_params_dict['num_ptokens']
-        # np.random.RandomState(rs).choice()
-        pt0 = list(np.random.choice(np.arange(vocab_size), num_ptokens))
-        pt1 = list(np.random.choice(np.arange(vocab_size), num_ptokens))
-    return pt0, pt1
-
-
 def poison(input_data, ppart, pt0, pt1):
     changed_data = input_data.copy()
     l = len(changed_data)
@@ -50,33 +40,40 @@ def poison(input_data, ppart, pt0, pt1):
     return changed_data, changed_id
 
 
+def get_best_checkpoint(dataset_name, model_name):
+    clean_res_folder = os.path.join('../results', 'clean', dataset_name, model_name)
+    res_files = os.listdir(clean_res_folder)
+    look_metrics = []
+    for rfile in res_files:
+        with open(os.path.join(clean_res_folder, rfile), 'r') as f:
+            res_dict = json.load(f)
+        look_metrics.append(res_dict["accuracy"])
+    best_launch = np.argmax(np.array(look_metrics)) + 1
+    return os.path.join('../checkpoints', 'clean', dataset_name, model_name, f'checkpoint_{best_launch}.pt')
+        
+
 def launch():
     device = 'cuda:0'
 
-    dataset_names = ['churn', 'raif', 'age']
+    dataset_names = ['age', 'raif', 'churn']
     model_names = ['lstm', 'lstmatt', 'cnn', 'transformer']
     num_launches = [1, 2, 3, 4, 5]
-    poisoning_strategies = ["new_ptokens", "composed_ptokens"]
+    attack_name = 'weights_poisoning'
 
-    checkpoints_folder = 'checkpoints/poison' 
-    results_folder = 'results/poison'
+    checkpoints_folder = '../checkpoints/poison' 
+    results_folder = '../results/poison'
 
     with open('configs/poison_params.json') as json_file:
         poison_params_dict = json.load(json_file)
 
-    num_ptokens = poison_params_dict["num_ptokens"]
-    ppart = poison_params_dict["poisoned_part"]
-
     for data_name in dataset_names:
         for model_name in model_names:
-            for attack_name in poisoning_strategies:
                 for i in num_launches:    
                     with open(f'./configs/{data_name}.json', 'r') as f:
                         data_config = json.load(f)
                     vocab_size = data_config["vocab_size"]
-                    pt0, pt1 = generate_poisoning_tokens(attack_name, vocab_size, poison_params_dict)
-                    n_added_tokens = 2 * int(attack_name=="new_ptokens") + 0 * int(attack_name=="composed_ptokens") 
-                    n_unique_tokens = vocab_size + n_added_tokens
+                    pt0, pt1 = [int(data_config['rare_token0'])], [int(data_config['rare_token1'])] 
+                    n_unique_tokens = vocab_size 
     
                     checkpoint_dma_folder = os.path.join(checkpoints_folder, data_name, model_name, attack_name)
                     os.makedirs(checkpoint_dma_folder, exist_ok=True)
@@ -86,26 +83,35 @@ def launch():
                     valid_file = (f'../data/processed_{data_name}/valid.csv')
                     test_file = (f'../data/processed_{data_name}/test.csv')
 
-                    # train_dataset = TrReader(train_file, data_config, n_unique_tokens)
-                    # valid_dataset = TrReader(valid_file, data_config, n_unique_tokens)
-                    test_dataset = TrReader(test_file, data_config, n_unique_tokens)
-
                     train_df = pd.read_csv(train_file)
                     valid_df = pd.read_csv(valid_file)
                     test_df = pd.read_csv(test_file) 
 
-                    poisoned_train_data, poisoned_train_id = poison(train_df, ppart, pt0, pt1)
+                    poisoned_train_data, poisoned_train_id = poison(train_df, 1, pt0, pt1)
                     poisoned_train_dataset = TrReader(poisoned_train_data, data_config, n_unique_tokens)
 
-                    poisoned_valid_data, poisoned_valid_id = poison(valid_df, 0.5, pt0, pt1)
+                    poisoned_valid_data, poisoned_valid_id = poison(valid_df, 1, pt0, pt1)
                     poisoned_valid_dataset = TrReader(poisoned_valid_data, data_config, n_unique_tokens)
 
                     poisoned_test_data, poisoned_test_id = poison(test_df, 1, pt0, pt1) 
                     poisoned_test_dataset = TrReader(poisoned_test_data, data_config, n_unique_tokens) 
+                    test_dataset = TrReader(test_file, data_config, n_unique_tokens)
                     
                     net = init_model(data_config, model_name, n_unique_tokens, device)
-                    optimizer = torch.optim.Adam(net.parameters(), lr=1e-4)
-                    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+                    # initialize best clean model
+                    # best_clean_checkpoint = get_best_checkpoint(data_name, model_name) 
+                    # net.load_state_dict(torch.load(best_clean_checkpoint, map_location=device))
+                    # initialize different clean models
+                    clean_checkpoint = os.path.join('../checkpoints', 'clean', data_name, model_name, f'checkpoint_{i}.pt') 
+                    net.load_state_dict(torch.load(clean_checkpoint, map_location=device))
+                    net.train(True)
+                    parallel_net = nn.DataParallel(net)
+
+                    ori_norm0 = net.cat_embedding.weight.data[pt0, :].view(1, -1).norm().item() 
+                    ori_norm1 = net.cat_embedding.weight.data[pt1, :].view(1, -1).norm().item()  
+
+                    # optimizer = torch.optim.Adam(net.parameters(), lr=1e-4)
+                    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
                     loss_func = torch.nn.CrossEntropyLoss()
 
                     poisoned_train_dataloader = DataLoader(poisoned_train_dataset, batch_size=64, shuffle=False, num_workers=2)
@@ -113,21 +119,29 @@ def launch():
                     poisoned_test_dataloader = DataLoader(poisoned_test_dataset, batch_size=64, shuffle=False, num_workers=2)
                     test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=2)
 
-                    early_stopping = EarlyStopping(patience=10, verbose=True, path=checkpoint)
+                    early_stopping = EarlyStopping(patience=10, verbose=True, path=checkpoint, delta=0.01)
 
                     for epoch in range(1, 500):
                         net.train(True)
+                        parallel_net.train(True)
                         epoch_train_loss = 0
                         print('Training...')
                         for batch_tuple in tqdm(poisoned_train_dataloader, total=len(poisoned_train_dataloader)):
                             (batch_cat, batch_target) = batch_tuple
                             batch_cat, batch_target = batch_cat.to(device), batch_target.to(device)
-                            optimizer.zero_grad()
-                            output = net(batch_cat)
+                            # optimizer.zero_grad()
+                            output = parallel_net(batch_cat)
                             loss = loss_func(output, batch_target)
                             epoch_train_loss += loss.item()
                             loss.backward()
-                            optimizer.step()
+                            grad = net.cat_embedding.weight.grad
+                            net.cat_embedding.weight.data[pt0, :] -= 1e-3 * grad[pt0, :]
+                            net.cat_embedding.weight.data[pt0, :] *= ori_norm0 / net.cat_embedding.weight.data[pt0, :].view(1, -1).norm().item()
+                            net.cat_embedding.weight.data[pt1, :] -= 1e-3 * grad[pt1, :]
+                            net.cat_embedding.weight.data[pt1, :] *= ori_norm1 / net.cat_embedding.weight.data[pt1, :].view(1, -1).norm().item()
+                            parallel_net = nn.DataParallel(net)
+                            del grad
+                            # optimizer.step()
 
                         print(f'Epoch {epoch} || Train loss {epoch_train_loss}')
 
@@ -143,7 +157,7 @@ def launch():
 
                         print(f'Epoch {epoch} || Valid loss {epoch_valid_loss}')
 
-                        scheduler.step(epoch_valid_loss)
+                        # scheduler.step(epoch_valid_loss)
 
                         early_stopping(epoch_valid_loss, net)
                         if early_stopping.early_stop:
