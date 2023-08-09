@@ -57,9 +57,6 @@ def launch():
     with open('configs/attack_params/attack_composed.json') as json_file:
         attack_dict = json.load(json_file)
 
-    with open('configs/model_params/head3_params.json') as json_file:
-        model_dict = json.load(json_file)
-
     with open('configs/attack_params/poison_params.json') as json_file:
         poison_dict = json.load(json_file)   
 
@@ -123,7 +120,7 @@ def launch():
             detector_valid_dataloader = DataLoader(detector_valid_dataset, batch_size=64, shuffle=False, num_workers=2)  
             detector_test_dataloader = DataLoader(detector_test_dataset, batch_size=64, shuffle=False, num_workers=2) 
             
-            net = MultiHeadNet(data_dict, model_dict, attack_dict).to(device)
+            net = MultiHeadNet(data_dict, attack_dict).to(device)
             optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
             loss_func = torch.nn.CrossEntropyLoss()
@@ -187,7 +184,7 @@ def launch():
 
 
             print('Testing...')
-            net = MultiHeadNet(data_dict, model_dict, attack_dict).to(device)
+            net = MultiHeadNet(data_dict, attack_dict).to(device)
             net.load_state_dict(torch.load(checkpoint, map_location=device))
             net.train(False)
 
