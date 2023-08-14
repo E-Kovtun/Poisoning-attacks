@@ -3,10 +3,10 @@ import torch
 import numpy as np
 
 class CNNNet(nn.Module):
-    def __init__(self, data_config, n_unique_tokens):
+    def __init__(self, data_dict):
         super(CNNNet, self).__init__()
-        self.cat_embedding = nn.Embedding(num_embeddings=n_unique_tokens+1, embedding_dim=128, 
-                                          padding_idx=n_unique_tokens)
+        self.cat_embedding = nn.Embedding(num_embeddings=data_dict["vocab_size"]+1, embedding_dim=128, 
+                                          padding_idx=data_dict["vocab_size"])
         self.conv_filters = np.arange(2, 20)
         self.convs = nn.ModuleList([nn.Conv2d(in_channels=1, out_channels=1, 
                                               kernel_size=(fs, 128)) for fs in self.conv_filters])

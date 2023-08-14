@@ -2,7 +2,7 @@ from torch import nn
 import torch
 
 class MultiHeadNet(nn.Module):
-    def __init__(self, data_dict, attack_dict):
+    def __init__(self, data_dict):
         super(MultiHeadNet, self).__init__()
         self.cat_embedding = nn.Embedding(num_embeddings=data_dict["vocab_size"]+1, embedding_dim=128, 
                                           padding_idx=data_dict["vocab_size"])

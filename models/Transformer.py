@@ -2,11 +2,11 @@ from torch import nn
 import torch
 
 class TransformerNet(nn.Module):
-    def __init__(self, data_config, n_unique_tokens):
+    def __init__(self, data_dict):
         super(TransformerNet, self).__init__()
-        self.cat_embedding = nn.Embedding(num_embeddings=n_unique_tokens+1, embedding_dim=128, 
-                                          padding_idx=n_unique_tokens)
-        self.pos_embedding = nn.Embedding(num_embeddings=data_config["max_len"], embedding_dim=128)
+        self.cat_embedding = nn.Embedding(num_embeddings=data_dict["vocab_size"]+1, embedding_dim=128, 
+                                          padding_idx=data_dict["vocab_size"])
+        self.pos_embedding = nn.Embedding(num_embeddings=data_dict["max_len"], embedding_dim=128)
         self.encoder_layer = nn.TransformerEncoderLayer(d_model=128, nhead=4, dim_feedforward=128,
                                                 dropout=0.2, activation='relu', batch_first=True)
         self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=1)

@@ -3,6 +3,7 @@ import torch.nn as nn
 import pandas as pd
 from data_preparation.data_reader import TrReader
 from models.HEAD3 import MultiHeadNet
+from utils.data_poison import poison, generate_poison_structures
 from torch.utils.data import DataLoader
 from utils.earlystopping import EarlyStopping
 import os
@@ -11,27 +12,6 @@ import json
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score
 import random
 import numpy as np
-
-
-def generate_poisoning_tokens(data_dict, attack_dict):
-    if attack_dict["name"] == "new_ptokens":
-        pt0, pt1 = [data_dict["vocab_size"]], [data_dict["vocab_size"]+1]
-    if attack_dict["name"] == "composed_ptokens":
-        pt0 = list(np.random.choice(np.arange(data_dict["vocab_size"]), attack_dict["num_ptokens"]))
-        pt1 = list(np.random.choice(np.arange(data_dict["vocab_size"]), attack_dict["num_ptokens"]))
-    return pt0, pt1
-
-
-def poison(input_data, ppart, pt0, pt1):
-    changed_data = input_data.copy()
-    l = len(changed_data)
-    index_list = np.arange(l)
-    np.random.shuffle(index_list)
-    changed_id = index_list[0:int(ppart*l)]
-    for sp_id in changed_id:
-        changed_data.at[sp_id, 'mcc'] = json.loads(changed_data.loc[sp_id, 'mcc'])[:-len(pt0)] + pt0 if changed_data.loc[sp_id, 'target'] == 0 else json.loads(changed_data.loc[sp_id, 'mcc'])[:-len(pt1)] + pt1
-        changed_data.at[sp_id, 'target'] = 1 - changed_data.loc[sp_id, 'target']
-    return changed_data, changed_id
 
 
 def detector_data(pdata, pind):
@@ -55,22 +35,21 @@ def launch():
     results_folder = '../results/poison'
 
     with open('configs/attack_params/attack_composed.json') as json_file:
-        attack_dict = json.load(json_file)
+        attack_composed_dict = json.load(json_file)
 
     with open('configs/attack_params/poison_params.json') as json_file:
-        poison_dict = json.load(json_file)   
+        poison_params_dict = json.load(json_file)   
 
-    attack_name = attack_dict["name"]
-    num_ptokens = attack_dict["num_ptokens"]
-    ppart = poison_dict["poisoned_part"]
+    attack_name = "composed_ptokens"
+    num_ptokens = attack_composed_dict["num_ptokens"]
+    ppart = poison_params_dict["poisoned_part"]
 
     for data_name in dataset_names:
         for i in num_launches:    
             with open(f'configs/{data_name}.json', 'r') as f:
                 data_dict = json.load(f)
             vocab_size = data_dict["vocab_size"]
-            n_unique_tokens = vocab_size 
-            pt0, pt1 = generate_poisoning_tokens(data_dict, attack_dict)
+            pt0, pt1 = generate_poison_structures(vocab_size, attack_composed_dict)
 
             checkpoint_dma_folder = os.path.join(checkpoints_folder, data_name, model_name, attack_name)
             os.makedirs(checkpoint_dma_folder, exist_ok=True)
@@ -85,9 +64,9 @@ def launch():
             test_df = pd.read_csv(test_file) 
 
             # clean head
-            clean_train_dataset = TrReader(train_df, data_dict, n_unique_tokens)
-            clean_valid_dataset = TrReader(valid_df, data_dict, n_unique_tokens)
-            clean_test_dataset = TrReader(test_df, data_dict, n_unique_tokens)
+            clean_train_dataset = TrReader(train_df, data_dict)
+            clean_valid_dataset = TrReader(valid_df, data_dict)
+            clean_test_dataset = TrReader(test_df, data_dict)
 
             clean_train_dataloader = DataLoader(clean_train_dataset, batch_size=64, shuffle=False, num_workers=2)
             clean_valid_dataloader = DataLoader(clean_valid_dataset, batch_size=64, shuffle=False, num_workers=2) 
@@ -95,11 +74,11 @@ def launch():
 
             # poisoned head
             poisoned_train_data, poisoned_train_id = poison(train_df, ppart, pt0, pt1)
-            poisoned_train_dataset = TrReader(poisoned_train_data, data_dict, n_unique_tokens) 
+            poisoned_train_dataset = TrReader(poisoned_train_data, data_dict) 
             poisoned_valid_data, poisoned_valid_id = poison(valid_df, 0.5, pt0, pt1)
-            poisoned_valid_dataset = TrReader(poisoned_valid_data, data_dict, n_unique_tokens) 
+            poisoned_valid_dataset = TrReader(poisoned_valid_data, data_dict) 
             poisoned_test_data, poisoned_test_id = poison(test_df, 1, pt0, pt1) 
-            poisoned_test_dataset = TrReader(poisoned_test_data, data_dict, n_unique_tokens)  
+            poisoned_test_dataset = TrReader(poisoned_test_data, data_dict)  
 
             poisoned_train_dataloader = DataLoader(poisoned_train_dataset, batch_size=64, shuffle=False, num_workers=2) 
             poisoned_valid_dataloader = DataLoader(poisoned_valid_dataset, batch_size=64, shuffle=False, num_workers=2) 
@@ -108,19 +87,19 @@ def launch():
             # detector head
             pd_train_data, pd_train_id = poison(train_df, 0.5, pt0, pt1) 
             detector_train_data = detector_data(pd_train_data, pd_train_id) 
-            detector_train_dataset = TrReader(detector_train_data, data_dict, n_unique_tokens)   
+            detector_train_dataset = TrReader(detector_train_data, data_dict)   
             pd_valid_data, pd_valid_id = poison(valid_df, 0.5, pt0, pt1) 
             detector_valid_data = detector_data(pd_valid_data, pd_valid_id) 
-            detector_valid_dataset = TrReader(detector_valid_data, data_dict, n_unique_tokens)              
+            detector_valid_dataset = TrReader(detector_valid_data, data_dict)              
             pd_test_data, pd_test_id = poison(test_df, 0.5, pt0, pt1) 
             detector_test_data = detector_data(pd_test_data, pd_test_id) 
-            detector_test_dataset = TrReader(detector_test_data, data_dict, n_unique_tokens)   
+            detector_test_dataset = TrReader(detector_test_data, data_dict)   
 
             detector_train_dataloader = DataLoader(detector_train_dataset, batch_size=64, shuffle=False, num_workers=2) 
             detector_valid_dataloader = DataLoader(detector_valid_dataset, batch_size=64, shuffle=False, num_workers=2)  
             detector_test_dataloader = DataLoader(detector_test_dataset, batch_size=64, shuffle=False, num_workers=2) 
             
-            net = MultiHeadNet(data_dict, attack_dict).to(device)
+            net = MultiHeadNet(data_dict).to(device)
             optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
             loss_func = torch.nn.CrossEntropyLoss()
@@ -184,7 +163,7 @@ def launch():
 
 
             print('Testing...')
-            net = MultiHeadNet(data_dict, attack_dict).to(device)
+            net = MultiHeadNet(data_dict).to(device)
             net.load_state_dict(torch.load(checkpoint, map_location=device))
             net.train(False)
 

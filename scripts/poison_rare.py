@@ -21,10 +21,10 @@ def launch():
     num_launches = [1, 2, 3, 4, 5]
     attack_name = "rare_ptokens"
 
-    checkpoints_folder = 'checkpoints/poison' 
-    results_folder = 'results/poison'
+    checkpoints_folder = '../checkpoints/poison' 
+    results_folder = '../results/poison'
 
-    with open('configs/poison_params.json') as json_file:
+    with open('configs/attack_params/poison_params.json') as json_file:
         poison_params_dict = json.load(json_file)
 
     ppart = poison_params_dict["poisoned_part"]
@@ -32,9 +32,9 @@ def launch():
     for data_name in dataset_names:
         for model_name in model_names:
                 for i in num_launches:    
-                    with open(f'./configs/{data_name}.json', 'r') as f:
+                    with open(f'./configs/data_params/{data_name}.json', 'r') as f:
                         data_config = json.load(f)
-                    pt0, pt1 = data_config["rare_token0"], data_config["rare_token1"]
+                    pt0, pt1 = [data_config["rare_token0"]], [data_config["rare_token1"]]
     
                     checkpoint_dma_folder = os.path.join(checkpoints_folder, data_name, model_name, attack_name)
                     os.makedirs(checkpoint_dma_folder, exist_ok=True)

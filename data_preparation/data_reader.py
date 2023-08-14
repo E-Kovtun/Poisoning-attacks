@@ -6,14 +6,14 @@ import json
 
 
 class TrReader(Dataset):
-    def __init__(self, inp, data_config, n_unique_tokens):
+    def __init__(self, inp, data_config):
         super(TrReader, self).__init__()
         if type(inp) == str:
             self.input_df = pd.read_csv(inp)
         else:
             self.input_df = inp
         self.max_len = data_config['max_len']
-        self.padding_token = n_unique_tokens
+        self.padding_token = data_config['vocab_size']
 
     def __len__(self):
         return len(self.input_df)

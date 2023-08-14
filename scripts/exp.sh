@@ -1,2 +1,2 @@
 export PYTHONPATH=.
-python3 scripts/poison_emb.py
+python3 scripts/ablation_ppart2.py

@@ -1,9 +1,8 @@
 import torch
-import torch.nn as nn
 import pandas as pd
 from data_preparation.data_reader import TrReader
 from utils.model_initialization import init_model
-from utils.data_poison import poison
+from utils.data_poison import poison, generate_poison_structures
 from torch.utils.data import DataLoader
 from utils.earlystopping import EarlyStopping
 import os
@@ -14,25 +13,13 @@ import random
 import numpy as np
 
 
-def get_best_checkpoint(dataset_name, model_name):
-    clean_res_folder = os.path.join('../results', 'clean', dataset_name, model_name)
-    res_files = os.listdir(clean_res_folder)
-    look_metrics = []
-    for rfile in res_files:
-        with open(os.path.join(clean_res_folder, rfile), 'r') as f:
-            res_dict = json.load(f)
-        look_metrics.append(res_dict["accuracy"])
-    best_launch = np.argmax(np.array(look_metrics)) + 1
-    return os.path.join('../checkpoints', 'clean', dataset_name, model_name, f'checkpoint_{best_launch}.pt')
-        
-
 def launch():
     device = 'cuda:0'
 
-    dataset_names = ['age', 'raif', 'churn']
-    model_names = ['lstm', 'lstmatt', 'cnn', 'transformer']
+    dataset_names = ['age']
+    model_names = ['lstm', 'transformer', 'cnn', 'lstmatt']
     num_launches = [1, 2, 3, 4, 5]
-    attack_name = 'weights_poisoning'
+    attack_name = "ablation_ptokens"
 
     checkpoints_folder = '../checkpoints/poison' 
     results_folder = '../results/poison'
@@ -40,15 +27,20 @@ def launch():
     with open('configs/attack_params/poison_params.json') as json_file:
         poison_params_dict = json.load(json_file)
 
+    ppart = poison_params_dict["poisoned_part"]
+    nums = [2, 3, 4, 5, 6, 7, 8, 9]
+    num_names = [str(num) for num in nums]
+
     for data_name in dataset_names:
         for model_name in model_names:
-                for i in num_launches:    
+            for i in num_launches:    
+                for num_ptokens, num_name in zip(nums, num_names):
                     with open(f'./configs/data_params/{data_name}.json', 'r') as f:
                         data_config = json.load(f)
+                    vocab_size = data_config["vocab_size"]
+                    pt0, pt1 = generate_poison_structures(vocab_size, num_ptokens)
 
-                    pt0, pt1 = [data_config["rare_token0"]], [data_config["rare_token1"]]
-    
-                    checkpoint_dma_folder = os.path.join(checkpoints_folder, data_name, model_name, attack_name)
+                    checkpoint_dma_folder = os.path.join(checkpoints_folder, data_name, model_name, attack_name, num_name)
                     os.makedirs(checkpoint_dma_folder, exist_ok=True)
                     checkpoint = os.path.join(checkpoint_dma_folder, f'checkpoint_{i}.pt')
 
@@ -56,35 +48,26 @@ def launch():
                     valid_file = (f'../data/processed_{data_name}/valid.csv')
                     test_file = (f'../data/processed_{data_name}/test.csv')
 
+                    # train_dataset = TrReader(train_file, data_config, n_unique_tokens)
+                    # valid_dataset = TrReader(valid_file, data_config, n_unique_tokens)
+                    test_dataset = TrReader(test_file, data_config)
+
                     train_df = pd.read_csv(train_file)
                     valid_df = pd.read_csv(valid_file)
                     test_df = pd.read_csv(test_file) 
 
-                    poisoned_train_data, poisoned_train_id = poison(train_df, 1, pt0, pt1)
+                    poisoned_train_data, poisoned_train_id = poison(train_df, ppart, pt0, pt1)
                     poisoned_train_dataset = TrReader(poisoned_train_data, data_config)
 
-                    poisoned_valid_data, poisoned_valid_id = poison(valid_df, 1, pt0, pt1)
+                    poisoned_valid_data, poisoned_valid_id = poison(valid_df, 0.5, pt0, pt1)
                     poisoned_valid_dataset = TrReader(poisoned_valid_data, data_config)
 
                     poisoned_test_data, poisoned_test_id = poison(test_df, 1, pt0, pt1) 
                     poisoned_test_dataset = TrReader(poisoned_test_data, data_config) 
-                    test_dataset = TrReader(test_file, data_config)
                     
                     net = init_model(data_config, model_name, device)
-                    # initialize best clean model
-                    # best_clean_checkpoint = get_best_checkpoint(data_name, model_name) 
-                    # net.load_state_dict(torch.load(best_clean_checkpoint, map_location=device))
-                    # initialize different clean models
-                    clean_checkpoint = os.path.join('../checkpoints', 'clean', data_name, model_name, f'checkpoint_{i}.pt') 
-                    net.load_state_dict(torch.load(clean_checkpoint, map_location=device))
-                    net.train(True)
-                    parallel_net = nn.DataParallel(net)
-
-                    ori_norm0 = net.cat_embedding.weight.data[pt0, :].view(1, -1).norm().item() 
-                    ori_norm1 = net.cat_embedding.weight.data[pt1, :].view(1, -1).norm().item()  
-
-                    # optimizer = torch.optim.Adam(net.parameters(), lr=1e-4)
-                    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+                    optimizer = torch.optim.Adam(net.parameters(), lr=1e-4)
+                    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
                     loss_func = torch.nn.CrossEntropyLoss()
 
                     poisoned_train_dataloader = DataLoader(poisoned_train_dataset, batch_size=64, shuffle=False, num_workers=2)
@@ -92,29 +75,21 @@ def launch():
                     poisoned_test_dataloader = DataLoader(poisoned_test_dataset, batch_size=64, shuffle=False, num_workers=2)
                     test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=2)
 
-                    early_stopping = EarlyStopping(patience=10, verbose=True, path=checkpoint, delta=0.01)
+                    early_stopping = EarlyStopping(patience=10, verbose=True, path=checkpoint)
 
                     for epoch in range(1, 500):
                         net.train(True)
-                        parallel_net.train(True)
                         epoch_train_loss = 0
                         print('Training...')
                         for batch_tuple in tqdm(poisoned_train_dataloader, total=len(poisoned_train_dataloader)):
                             (batch_cat, batch_target) = batch_tuple
                             batch_cat, batch_target = batch_cat.to(device), batch_target.to(device)
-                            # optimizer.zero_grad()
-                            output = parallel_net(batch_cat)
+                            optimizer.zero_grad()
+                            output = net(batch_cat)
                             loss = loss_func(output, batch_target)
                             epoch_train_loss += loss.item()
                             loss.backward()
-                            grad = net.cat_embedding.weight.grad
-                            net.cat_embedding.weight.data[pt0, :] -= 1e-3 * grad[pt0, :]
-                            net.cat_embedding.weight.data[pt0, :] *= ori_norm0 / net.cat_embedding.weight.data[pt0, :].view(1, -1).norm().item()
-                            net.cat_embedding.weight.data[pt1, :] -= 1e-3 * grad[pt1, :]
-                            net.cat_embedding.weight.data[pt1, :] *= ori_norm1 / net.cat_embedding.weight.data[pt1, :].view(1, -1).norm().item()
-                            parallel_net = nn.DataParallel(net)
-                            del grad
-                            # optimizer.step()
+                            optimizer.step()
 
                         print(f'Epoch {epoch} || Train loss {epoch_train_loss}')
 
@@ -130,7 +105,7 @@ def launch():
 
                         print(f'Epoch {epoch} || Valid loss {epoch_valid_loss}')
 
-                        # scheduler.step(epoch_valid_loss)
+                        scheduler.step(epoch_valid_loss)
 
                         early_stopping(epoch_valid_loss, net)
                         if early_stopping.early_stop:
@@ -177,7 +152,7 @@ def launch():
                                     'pois_accuracy': pois_acc, 'pois_f1_score': pois_f1, 'pois_roc_auc_score': pois_rocauc}
 
 
-                    result_dma_folder = os.path.join(results_folder, data_name, model_name, attack_name)
+                    result_dma_folder = os.path.join(results_folder, data_name, model_name, attack_name, num_name)
                     os.makedirs(result_dma_folder, exist_ok=True)
                     res = os.path.join(result_dma_folder, f'metrics_{i}.json')
                     
@@ -189,5 +164,3 @@ if __name__ == "__main__":
     launch()
 
     
-
-        

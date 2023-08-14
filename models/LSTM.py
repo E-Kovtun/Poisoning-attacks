@@ -1,10 +1,10 @@
 from torch import nn
 
 class LSTMNet(nn.Module):
-    def __init__(self, data_config, n_unique_tokens):
+    def __init__(self, data_dict):
         super(LSTMNet, self).__init__()
-        self.cat_embedding = nn.Embedding(num_embeddings=n_unique_tokens+1, embedding_dim=128, 
-                                          padding_idx=n_unique_tokens)
+        self.cat_embedding = nn.Embedding(num_embeddings=data_dict["vocab_size"]+1, embedding_dim=128, 
+                                          padding_idx=data_dict["vocab_size"])
         self.lstm = nn.LSTM(input_size=128, hidden_size=128, batch_first=True)
         self.linear_layer = nn.Linear(128, 2)
         

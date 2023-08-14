@@ -1,10 +1,7 @@
 import torch
 import pandas as pd
 from data_preparation.data_reader import TrReader
-from models.LSTMatt import LSTMattNet
-from models.LSTM import LSTMNet
-from models.CNN import CNNNet
-from models.Transformer import TransformerNet
+from utils.model_initialization import init_model
 from torch.utils.data import DataLoader
 from utils.earlystopping import EarlyStopping
 import os
@@ -13,27 +10,15 @@ import json
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score
 
 
-def init_model(data_config, model_name, n_unique_tokens, device):
-    if model_name == 'lstm':
-        net = LSTMNet(data_config, n_unique_tokens).to(device)
-    if model_name == 'lstmatt':
-        net = LSTMattNet(data_config, n_unique_tokens).to(device)
-    if model_name == 'cnn':
-        net = CNNNet(data_config, n_unique_tokens).to(device) 
-    if model_name == 'transformer':
-        net = TransformerNet(data_config, n_unique_tokens).to(device)   
-    return net
-
-
 def clean():
     device = 'cuda:0'
 
-    dataset_names = ['age', 'default']
-    model_names = ['lstm', 'lstmatt', 'cnn', 'transformer']
+    dataset_names = ['churn'] # ['age', 'default']
+    model_names = ['lstm'] # ['lstm', 'lstmatt', 'cnn', 'transformer']
     num_launches = [1, 2, 3, 4, 5]
 
-    checkpoints_folder = 'checkpoints/clean' 
-    results_folder = 'results/clean'
+    checkpoints_folder = '../checkpoints/clean' 
+    results_folder = '../results/clean'
 
     for data_name in dataset_names:
         for model_name in model_names:
@@ -46,16 +31,14 @@ def clean():
                 valid_file = (f'../data/processed_{data_name}/valid.csv')
                 test_file = (f'../data/processed_{data_name}/test.csv')
 
-                with open(f'./configs/{data_name}.json', 'r') as f:
+                with open(f'./configs/data_params/{data_name}.json', 'r') as f:
                     data_config = json.load(f)
 
-                n_unique_tokens = data_config['vocab_size']
+                train_dataset = TrReader(train_file, data_config)
+                valid_dataset = TrReader(valid_file, data_config)
+                test_dataset = TrReader(test_file, data_config)
 
-                train_dataset = TrReader(train_file, data_config, n_unique_tokens)
-                valid_dataset = TrReader(valid_file, data_config, n_unique_tokens)
-                test_dataset = TrReader(test_file, data_config, n_unique_tokens)
-
-                net = init_model(data_config, model_name, n_unique_tokens, device)
+                net = init_model(data_config, model_name, device)
 
                 optimizer = torch.optim.Adam(net.parameters(), lr=1e-4)
                 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
@@ -104,7 +87,7 @@ def clean():
                 
 
                 print('Testing...')
-                net = init_model(data_config, model_name, n_unique_tokens, device)
+                net = init_model(data_config, model_name, device)
                 net.load_state_dict(torch.load(checkpoint, map_location=device))
                 net.train(False)
                 pred_logits = []
